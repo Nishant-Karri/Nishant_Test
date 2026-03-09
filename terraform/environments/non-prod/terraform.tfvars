@@ -26,4 +26,6 @@ iceberg_table   = "json_to_parquet_iceberg"
 tags = {
   Environment = "non-prod"
   Owner       = "Nishant-Karri"
+  CostCenter  = "engineering"
+  Terraform   = "true"
 }
