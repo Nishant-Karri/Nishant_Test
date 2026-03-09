@@ -1,0 +1,114 @@
+name: 🏗️ Terraform — Deploy AWS Infrastructure
+
+on:
+  pull_request:
+    branches: [Non-prod, Prod]
+    paths: ['terraform/**']
+  push:
+    branches: [Non-prod, Prod]
+    paths: ['terraform/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'non-prod'
+        type: choice
+        options: [non-prod, prod]
+      action:
+        description: 'Terraform action'
+        required: true
+        default: 'plan'
+        type: choice
+        options: [plan, apply, destroy]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event_name == 'pull_request' && 'Plan' || 'Apply' }}
+    runs-on: ubuntu-latest
+
+    env:
+      TF_ENV: ${{ github.ref == 'refs/heads/Prod' && 'prod' || 'non-prod' }}
+
+    defaults:
+      run:
+        working-directory: terraform/
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.6"
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=nishant-test-terraform-state" \
+            -backend-config="key=nishant-test/${{ env.TF_ENV }}/terraform.tfstate" \
+            -backend-config="region=${{ secrets.AWS_REGION }}"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan \
+            -var-file="environments/${{ env.TF_ENV }}/terraform.tfvars" \
+            -no-color \
+            -out=tfplan \
+            2>&1 | tee plan_output.txt
+
+      - name: Comment Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/plan_output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n...truncated' : plan;
+            const body = `### Terraform Plan — \`${{ env.TF_ENV }}\` 📋
+            <details><summary>Show Plan</summary>
+
+            \`\`\`hcl
+            ${truncated}
+            \`\`\`
+            </details>`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Terraform Apply
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+        run: terraform apply -auto-approve tfplan
+
+      - name: Terraform Destroy
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+        run: |
+          terraform destroy \
+            -var-file="environments/${{ env.TF_ENV }}/terraform.tfvars" \
+            -auto-approve
+
+      - name: Show Outputs
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+        run: terraform output
