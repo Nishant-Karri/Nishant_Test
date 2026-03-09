@@ -1,0 +1,74 @@
+name: 🚀 Deploy Glue Job to AWS
+
+# Uploads the latest Glue script to S3 and updates the Glue job definition.
+# Triggers on push to Non-prod or Prod branches, or manually.
+
+on:
+  push:
+    branches:
+      - Non-prod
+      - Prod
+    paths:
+      - 'glue_json_to_parquet_v*.py'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'non-prod'
+        type: choice
+        options:
+          - non-prod
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-glue:
+    name: Deploy Glue Script
+    runs-on: ubuntu-latest
+
+    environment: ${{ github.ref == 'refs/heads/Prod' && 'prod' || 'non-prod' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Determine script version
+        id: version
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/Prod" ]; then
+            echo "SCRIPT=glue_json_to_parquet_v3.py" >> $GITHUB_OUTPUT
+            echo "JOB_NAME=${{ secrets.GLUE_JOB_NAME_PROD }}" >> $GITHUB_OUTPUT
+            echo "BUCKET=${{ secrets.GLUE_SCRIPTS_BUCKET_PROD }}" >> $GITHUB_OUTPUT
+          else
+            echo "SCRIPT=glue_json_to_parquet_v4.py" >> $GITHUB_OUTPUT
+            echo "JOB_NAME=${{ secrets.GLUE_JOB_NAME_NONPROD }}" >> $GITHUB_OUTPUT
+            echo "BUCKET=${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Glue script to S3
+        run: |
+          aws s3 cp ${{ steps.version.outputs.SCRIPT }} \
+            s3://${{ steps.version.outputs.BUCKET }}/scripts/${{ steps.version.outputs.SCRIPT }}
+          echo "✅ Uploaded ${{ steps.version.outputs.SCRIPT }} to S3"
+
+      - name: Update Glue job script location
+        run: |
+          aws glue update-job \
+            --job-name "${{ steps.version.outputs.JOB_NAME }}" \
+            --job-update "Command={Name=glueetl,ScriptLocation=s3://${{ steps.version.outputs.BUCKET }}/scripts/${{ steps.version.outputs.SCRIPT }},PythonVersion=3}"
+          echo "✅ Glue job updated: ${{ steps.version.outputs.JOB_NAME }}"
+
+      - name: Confirm deployment
+        run: |
+          aws glue get-job --job-name "${{ steps.version.outputs.JOB_NAME }}" \
+            --query 'Job.Command.ScriptLocation' --output text

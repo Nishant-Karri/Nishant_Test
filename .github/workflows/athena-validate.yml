@@ -1,0 +1,91 @@
+name: 🔍 Validate Athena Tables
+
+# Queries Athena to validate Parquet and Iceberg tables after a Glue job run.
+
+on:
+  workflow_run:
+    workflows: ["▶️ Run Glue Job"]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate-athena:
+    name: Validate Athena Tables
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Validate Parquet table row count
+        run: |
+          QUERY="SELECT COUNT(*) as row_count FROM ${{ secrets.ATHENA_TABLE }}"
+          EXEC_ID=$(aws athena start-query-execution \
+            --query-string "$QUERY" \
+            --query-execution-context Database=${{ secrets.ATHENA_DATABASE }} \
+            --result-configuration OutputLocation=${{ secrets.ATHENA_OUTPUT_S3 }} \
+            --query 'QueryExecutionId' --output text)
+          echo "Athena query ID: $EXEC_ID"
+
+          while true; do
+            STATE=$(aws athena get-query-execution --query-execution-id $EXEC_ID \
+              --query 'QueryExecution.Status.State' --output text)
+            [ "$STATE" == "SUCCEEDED" ] && break
+            [ "$STATE" == "FAILED" ] && echo "❌ Athena query failed" && exit 1
+            sleep 5
+          done
+
+          COUNT=$(aws athena get-query-results --query-execution-id $EXEC_ID \
+            --query 'ResultSet.Rows[1].Data[0].VarCharValue' --output text)
+          echo "✅ Parquet table row count: $COUNT"
+
+      - name: Validate Iceberg table row count
+        run: |
+          QUERY="SELECT COUNT(*) as row_count FROM ${{ secrets.ICEBERG_TABLE }}"
+          EXEC_ID=$(aws athena start-query-execution \
+            --query-string "$QUERY" \
+            --query-execution-context Database=${{ secrets.ATHENA_DATABASE }} \
+            --result-configuration OutputLocation=${{ secrets.ATHENA_OUTPUT_S3 }} \
+            --query 'QueryExecutionId' --output text)
+
+          while true; do
+            STATE=$(aws athena get-query-execution --query-execution-id $EXEC_ID \
+              --query 'QueryExecution.Status.State' --output text)
+            [ "$STATE" == "SUCCEEDED" ] && break
+            [ "$STATE" == "FAILED" ] && echo "❌ Iceberg query failed" && exit 1
+            sleep 5
+          done
+
+          COUNT=$(aws athena get-query-results --query-execution-id $EXEC_ID \
+            --query 'ResultSet.Rows[1].Data[0].VarCharValue' --output text)
+          echo "✅ Iceberg table row count: $COUNT"
+
+      - name: Validate Iceberg table schema
+        run: |
+          QUERY="DESCRIBE ${{ secrets.ICEBERG_TABLE }}"
+          EXEC_ID=$(aws athena start-query-execution \
+            --query-string "$QUERY" \
+            --query-execution-context Database=${{ secrets.ATHENA_DATABASE }} \
+            --result-configuration OutputLocation=${{ secrets.ATHENA_OUTPUT_S3 }} \
+            --query 'QueryExecutionId' --output text)
+
+          while true; do
+            STATE=$(aws athena get-query-execution --query-execution-id $EXEC_ID \
+              --query 'QueryExecution.Status.State' --output text)
+            [ "$STATE" == "SUCCEEDED" ] && break
+            [ "$STATE" == "FAILED" ] && echo "❌ Schema query failed" && exit 1
+            sleep 5
+          done
+
+          echo "✅ Iceberg table schema:"
+          aws athena get-query-results --query-execution-id $EXEC_ID \
+            --query 'ResultSet.Rows[*].Data[*].VarCharValue' --output table
