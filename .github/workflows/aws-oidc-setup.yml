@@ -1,0 +1,34 @@
+name: 🔐 AWS OIDC Auth Setup
+
+# This workflow validates that GitHub OIDC authentication to AWS is working.
+# Run this first after setting up the IAM OIDC provider in your AWS account.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  verify-aws-connection:
+    name: Verify AWS Connection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Verify S3 access
+        run: aws s3 ls
+
+      - name: Verify Glue access
+        run: aws glue list-jobs --max-results 10

@@ -1,0 +1,91 @@
+name: 🏗️ Terraform — Deploy AWS Infrastructure
+
+# Plans and applies Terraform infrastructure changes.
+# Plan runs on PRs, Apply runs on merge to Non-prod or Prod.
+
+on:
+  pull_request:
+    branches:
+      - Non-prod
+      - Prod
+    paths:
+      - 'terraform/**'
+  push:
+    branches:
+      - Non-prod
+      - Prod
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform:
+    name: Terraform ${{ github.event_name == 'pull_request' && 'Plan' || 'Apply' }}
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: terraform/
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.6"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -out=tfplan
+        env:
+          TF_VAR_source_bucket_name: ${{ secrets.SOURCE_BUCKET_NAME }}
+          TF_VAR_target_bucket_name: ${{ secrets.TARGET_BUCKET_NAME }}
+          TF_VAR_athena_results_bucket_name: ${{ secrets.ATHENA_RESULTS_BUCKET }}
+          TF_VAR_glue_scripts_bucket_name: ${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}
+
+      - name: Comment plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Terraform Plan 📋
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\``;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+      - name: Terraform Apply
+        if: github.event_name == 'push'
+        run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_source_bucket_name: ${{ secrets.SOURCE_BUCKET_NAME }}
+          TF_VAR_target_bucket_name: ${{ secrets.TARGET_BUCKET_NAME }}
+          TF_VAR_athena_results_bucket_name: ${{ secrets.ATHENA_RESULTS_BUCKET }}
+          TF_VAR_glue_scripts_bucket_name: ${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}
