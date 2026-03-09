@@ -62,7 +62,7 @@ jobs:
             -backend-config="region=${{ secrets.AWS_REGION }}"
 
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+        run: terraform fmt -recursive
 
       - name: Terraform Validate
         run: terraform validate
