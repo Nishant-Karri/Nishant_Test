@@ -8,14 +8,13 @@ terraform {
     }
   }
 
-  # Remote state stored in S3 with DynamoDB locking
-  # Update bucket/table names to match your AWS account before first init
+  # Remote state stored in S3
+  # DynamoDB locking disabled until nishant-test-terraform-locks table is created by first apply
   backend "s3" {
-    bucket         = "nishant-test-terraform-state"
-    key            = "nishant-test/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "nishant-test-terraform-locks"
+    bucket  = "nishant-test-terraform-state"
+    key     = "nishant-test/terraform.tfstate"
+    region  = "us-east-1"
+    encrypt = true
   }
 }
 
