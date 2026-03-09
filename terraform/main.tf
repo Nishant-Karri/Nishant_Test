@@ -183,8 +183,14 @@ resource "aws_glue_catalog_table" "parquet" {
       parameters            = { "serialization.format" = "1" }
     }
 
-    columns { name = "id"   type = "string" }
-    columns { name = "name" type = "string" }
+    columns {
+      name = "id"
+      type = "string"
+    }
+    columns {
+      name = "name"
+      type = "string"
+    }
   }
 }
 
@@ -205,8 +211,14 @@ resource "aws_glue_catalog_table" "iceberg" {
 
   storage_descriptor {
     location = "s3://${aws_s3_bucket.iceberg.bucket}/${var.iceberg_table}/"
-    columns { name = "id"   type = "string" }
-    columns { name = "name" type = "string" }
+    columns {
+      name = "id"
+      type = "string"
+    }
+    columns {
+      name = "name"
+      type = "string"
+    }
   }
 }
 
