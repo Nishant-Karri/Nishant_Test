@@ -1,0 +1,52 @@
+name: 📦 Sync Test Data to S3
+
+# Uploads test datasets from the repo to S3 for use in Glue job runs.
+
+on:
+  push:
+    branches:
+      - Non-prod
+    paths:
+      - 'test_data/**'
+      - 'regression_test_data/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  sync-test-data:
+    name: Upload Test Data to S3
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Sync QA test data to S3
+        run: |
+          aws s3 sync test_data/ \
+            s3://${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}/test-data/qa/ \
+            --delete
+          echo "✅ QA test data synced to S3"
+
+      - name: Sync regression test data to S3
+        run: |
+          aws s3 sync regression_test_data/ \
+            s3://${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}/test-data/regression/ \
+            --delete
+          echo "✅ Regression test data synced to S3"
+
+      - name: List uploaded files
+        run: |
+          echo "── QA Test Data ──"
+          aws s3 ls s3://${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}/test-data/qa/ --recursive | wc -l
+          echo "── Regression Test Data ──"
+          aws s3 ls s3://${{ secrets.GLUE_SCRIPTS_BUCKET_NONPROD }}/test-data/regression/ --recursive | wc -l
