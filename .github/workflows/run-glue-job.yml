@@ -1,0 +1,83 @@
+name: ▶️ Run Glue Job
+
+# Triggers the Glue job on-demand or on a schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to run in'
+        required: true
+        default: 'non-prod'
+        type: choice
+        options:
+          - non-prod
+          - prod
+      source_s3_path:
+        description: 'S3 source JSON path'
+        required: true
+        default: 's3://my-bucket/raw/'
+      target_s3_path:
+        description: 'S3 target Parquet path'
+        required: true
+        default: 's3://my-bucket/processed/'
+  schedule:
+    - cron: '0 2 * * *'   # Daily at 2 AM UTC
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  run-glue:
+    name: Trigger Glue Job
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Start Glue job run
+        id: start-job
+        run: |
+          JOB_NAME=${{ github.event.inputs.environment == 'prod' && secrets.GLUE_JOB_NAME_PROD || secrets.GLUE_JOB_NAME_NONPROD }}
+          RUN_ID=$(aws glue start-job-run \
+            --job-name "$JOB_NAME" \
+            --arguments \
+              "--source_s3_path=${{ github.event.inputs.source_s3_path || secrets.DEFAULT_SOURCE_S3_PATH }}",\
+              "--target_s3_path=${{ github.event.inputs.target_s3_path || secrets.DEFAULT_TARGET_S3_PATH }}",\
+              "--athena_database=${{ secrets.ATHENA_DATABASE }}",\
+              "--athena_table=${{ secrets.ATHENA_TABLE }}",\
+              "--athena_output_s3=${{ secrets.ATHENA_OUTPUT_S3 }}",\
+              "--iceberg_table=${{ secrets.ICEBERG_TABLE }}",\
+              "--iceberg_s3_path=${{ secrets.ICEBERG_S3_PATH }}",\
+              "--iceberg_warehouse=${{ secrets.ICEBERG_WAREHOUSE }}" \
+            --query 'JobRunId' --output text)
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "JOB_NAME=$JOB_NAME" >> $GITHUB_OUTPUT
+          echo "🚀 Started Glue job run: $RUN_ID"
+
+      - name: Poll Glue job until complete
+        run: |
+          JOB_NAME=${{ steps.start-job.outputs.JOB_NAME }}
+          RUN_ID=${{ steps.start-job.outputs.RUN_ID }}
+          echo "Polling job run: $RUN_ID"
+          while true; do
+            STATE=$(aws glue get-job-run \
+              --job-name "$JOB_NAME" \
+              --run-id "$RUN_ID" \
+              --query 'JobRun.JobRunState' --output text)
+            echo "State: $STATE"
+            case $STATE in
+              SUCCEEDED) echo "✅ Glue job succeeded"; exit 0 ;;
+              FAILED|ERROR|TIMEOUT|STOPPED)
+                echo "❌ Glue job $STATE"
+                aws glue get-job-run --job-name "$JOB_NAME" --run-id "$RUN_ID" \
+                  --query 'JobRun.ErrorMessage' --output text
+                exit 1 ;;
+              *) sleep 30 ;;
+            esac
+          done

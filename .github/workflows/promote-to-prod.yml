@@ -1,0 +1,54 @@
+name: 🏁 Promote Non-prod to Prod
+
+# Creates a PR to promote tested Non-prod code to Prod.
+# Runs after all Non-prod validations pass.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: 'Release notes for this promotion'
+        required: true
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    name: Promote to Prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Verify Non-prod Glue job is healthy
+        run: |
+          STATE=$(aws glue get-job --job-name "${{ secrets.GLUE_JOB_NAME_NONPROD }}" \
+            --query 'Job.Name' --output text 2>/dev/null)
+          [ -z "$STATE" ] && echo "❌ Non-prod Glue job not found" && exit 1
+          echo "✅ Non-prod Glue job verified: $STATE"
+
+      - name: Create promotion PR to Prod
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🏁 Promote Non-prod → Prod`,
+              head: 'Non-prod',
+              base: 'Prod',
+              body: `## Production Promotion\n\n**Release Notes:**\n${{ github.event.inputs.release_notes }}\n\n**Triggered by:** @${{ github.actor }}\n\n### Pre-merge Checklist\n- [ ] All QA test cases passed\n- [ ] All regression tests passed\n- [ ] Athena tables validated\n- [ ] Glue job healthy in Non-prod\n- [ ] QA Lead sign-off obtained`
+            });
+            console.log(`✅ PR created: ${pr.data.html_url}`);
