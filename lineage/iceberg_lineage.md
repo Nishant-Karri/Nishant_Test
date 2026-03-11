@@ -356,16 +356,6 @@ ORDER BY scheduled_time DESC LIMIT 10;
 | **Snapshot (Iceberg)** | An immutable point-in-time view of an Iceberg table. Each write operation creates a new snapshot. Enables time-travel queries (`AS OF`) and rollback. Snapshot ID: `9076158952705182747`. |
 | **Manifest (Iceberg)** | An Avro file listing all data files that belong to a specific Iceberg snapshot, along with file statistics (row counts, null counts, min/max values). |
 | **Parquet** | A columnar binary file format optimised for analytical queries. Stores data column-by-column, enabling efficient reads for specific fields. Used here with Snappy compression. |
-| **Pivot Point** | A technical analysis price level calculated from the prior period's high, low, and close. Divides the market into bullish (above PP) and bearish (below PP) regimes. |
-| **ATR (Average True Range)** | A volatility indicator measuring average daily price range. Larger ATR = more volatile market. Used here to size stop losses and price targets proportionally. |
-| **RSI (Relative Strength Index)** | A momentum oscillator (0–100). RSI > 70 = overbought (potential reversal), RSI < 30 = oversold (potential bounce). Developed by J. Welles Wilder. |
-| **EMA (Exponential Moving Average)** | A moving average that weights recent prices more heavily than older ones. EMA-9 reacts faster to price changes than EMA-21. A 9/21 EMA crossover signals trend changes. |
-| **Bollinger Bands** | Volatility bands placed 2 standard deviations above/below a 20-period moving average. When price approaches the upper band, the asset is considered statistically overbought. |
-| **Fibonacci Retracement** | Horizontal support/resistance levels at 23.6%, 38.2%, 50%, 61.8%, and 78.6% of a prior price swing. The 61.8% level ("golden ratio") is considered the strongest. |
-| **Risk:Reward Ratio (R:R)** | `Potential profit / Potential loss`. A 2:1 R:R means you risk $1 to make $2. Generally, R:R ≥ 1.5 is considered acceptable in trading. |
-| **MCL** | Micro WTI Crude Oil futures contract (CME Group). 1/10th the size of a standard CL contract. Tracks the price of West Texas Intermediate (WTI) crude oil in USD per barrel. |
-| **WTI (West Texas Intermediate)** | A grade of crude oil used as a pricing benchmark for North American oil markets. Spot price published daily by the U.S. Energy Information Administration (EIA). |
-| **EIA RWTC** | U.S. Energy Information Administration — Cushing, OK WTI Spot Price FOB (Dollars per Barrel). The authoritative daily spot price for WTI crude oil. Series ID: `RWTC`. |
 
 ### Technical Terms
 
@@ -380,9 +370,6 @@ ORDER BY scheduled_time DESC LIMIT 10;
 | **Snappy Compression** | A fast, lossless compression algorithm used for the Parquet files. Balances compression ratio (~2:1) with read/write speed. |
 | **MSCK REPAIR TABLE** | An Athena/Hive DDL command that scans S3 and adds any new partitions to the Glue Catalog. Required after writing new Parquet files to partitioned S3 paths. |
 | **Spark Catalog (glue_catalog)** | Iceberg's Spark integration that connects to AWS Glue as the Iceberg catalog. Configured via `spark.sql.catalog.glue_catalog.*` properties. |
-| **DPU (Data Processing Unit)** | The unit of compute capacity in AWS Glue. G.1X workers = 1 DPU each (4 vCPU, 16 GB RAM). This job uses 2 workers = 2 DPUs. |
-| **VertiPaq / Snowflake micro-partition** | Snowflake's internal columnar storage format. Iceberg tables in Snowflake read directly from S3 Parquet files rather than using Snowflake's internal storage. |
-| **CRON schedule** | Time-based task scheduling syntax. `CRON 0 * * * * UTC` = "at minute 0 of every hour, every day, UTC timezone". |
 | **Avro** | A row-based binary serialisation format. Used by Iceberg for manifest files and snapshot files (metadata layer). |
 | **metadata.json (Iceberg)** | The root metadata file for an Iceberg table. Contains schema definition, partition spec, snapshot history, and pointer to the current manifest list. |
 | **Parquet field ID** | A stable numeric identifier for each column in the Iceberg schema. Field IDs (`id=1`, `name=2`) are immutable across renames, allowing schema evolution without breaking downstream readers. |
