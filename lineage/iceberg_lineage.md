@@ -1,221 +1,328 @@
 # Data Lineage — `NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG`
 
 > **Generated:** March 11, 2026
-> **Source:** Snowflake Account Usage (`ACCOUNT_USAGE.OBJECT_DEPENDENCIES`, `ACCESS_HISTORY`, `TASK_HISTORY`)
-> **Account:** `PHTIMLK-UZ24815` · **Role:** `ACCOUNTADMIN`
+> **Sources:** AWS Glue API · S3 API · Snowflake `ACCOUNT_USAGE` + `INFORMATION_SCHEMA`
+> **AWS Account:** `717728193460` · **Snowflake Account:** `PHTIMLK-UZ24815`
 
 ---
 
-## Lineage Flow Diagram
+## End-to-End Lineage Flow
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     AWS S3 (Source)                     │
-│         s3://nishant-test-nonprod-iceberg/              │
-│                   Region: us-east-1                     │
-└────────────────────────┬────────────────────────────────┘
-                         │ Storage Integration
-                         │ SNOWFLAKE_S3_INTEGRATION
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│               ICEBERG_S3_STAGE (External Stage)         │
-│   NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.ICEBERG_S3_STAGE   │
-│   Type: External · Cloud: AWS · Region: us-east-1      │
-│   Owner: ACCOUNTADMIN                                   │
-└────────────────────────┬────────────────────────────────┘
-                         │ COPY INTO / External Table
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│         JSON_TO_PARQUET_ICEBERG  ◄── SOURCE TABLE       │
-│   NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG │
-│   Type: Iceberg Table (BASE TABLE)                      │
-│   Rows: 1,000 · Size: 23,416 bytes                      │
-│   Created:  2026-03-10 14:23:57 PST                     │
-│   Modified: 2026-03-10 14:24:01 PST                     │
-│   Columns: ID (TEXT), NAME (TEXT)                       │
-└────────────────────────┬────────────────────────────────┘
-                         │ READ by SYSTEM user
-                         │ via Snowflake Task (hourly)
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│        DBT_ICEBERG_REFRESH_TASK (Snowflake Task)        │
-│   NISHANT_ICEBERG_DB.DBT_SCHEMA.DBT_ICEBERG_REFRESH_TASK│
-│   Schedule: CRON 0 * * * * UTC  (every hour, top of hr) │
-│   State: started (ACTIVE)                               │
-│   Warehouse: COMPUTE_WH                                 │
-│   Definition: CALL run_dbt_iceberg_refresh()            │
-│   Owner: ACCOUNTADMIN                                   │
-└────────────────────────┬────────────────────────────────┘
-                         │ CREATE OR REPLACE TABLE
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│      JSON_TO_PARQUET_ICEBERG_DBT  ◄── dbt OUTPUT       │
-│   NISHANT_ICEBERG_DB.DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT │
-│   Type: BASE TABLE (Iceberg via dbt)                    │
-│   Rows: 1,000 · Size: 17,408 bytes                      │
-│   Columns: ID (TEXT), NAME (TEXT)                       │
-│   Refresh: Full replace on every task run               │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        RAW SOURCE (S3)                           │
+│   s3://nishant-test-nonprod-source-raw/raw/                      │
+│   Format: JSON  (multiLine)  ·  Schema: { id, name }            │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │ Input
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              AWS GLUE JOB  (Creation & Update Engine)            │
+│   Name:    nishant-test-nonprod-json-to-parquet                  │
+│   Script:  glue_json_to_parquet_v4.py (S3 / GitHub)             │
+│   Runtime: Glue 4.0 · PySpark · Python 3                        │
+│   Workers: 2 × G.1X · Max concurrency: 1 · Retries: 1          │
+│   Role:    nishant-test-non-prod-glue-role (IAM)                 │
+│   Trigger: GitHub Actions (GitHubActionsRole / CI-CD)           │
+│                                                                  │
+│   Steps:                                                         │
+│   1. Configure Spark for Iceberg + Glue Catalog                  │
+│   2. Read JSON from S3 (multiLine, recurse)                     │
+│   3. Select columns: id, name                                    │
+│   4. Write Parquet → target S3 (Snappy)                         │
+│   5. Append to Iceberg → glue_catalog via .writeTo().append()   │
+│   6. MSCK REPAIR TABLE on Athena parquet table                  │
+└────┬────────────────────────────┬────────────────────────────────┘
+     │ Parquet write              │ Iceberg write (.append())
+     ▼                            ▼
+┌──────────────────┐   ┌──────────────────────────────────────────┐
+│  PARQUET TABLE   │   │         AWS S3 — Iceberg Storage         │
+│  (Athena/Glue)   │   │  s3://nishant-test-nonprod-iceberg/      │
+│                  │   │  json_to_parquet_iceberg/                │
+│  DB: nishant_    │   │  ├── data/  (20 × .parquet, ~23KB total) │
+│  test_nonprod_db │   │  └── metadata/                           │
+│  Table:          │   │      ├── 00000-*.metadata.json  (v0)     │
+│  json_to_parquet │   │      ├── 00001-*.metadata.json  (v1)     │
+│  Format: Parquet │   │      ├── *-m0.avro  (manifest)           │
+│  Compress: SNAPPY│   │      └── snap-9076158952705182747-*.avro  │
+│  Cols: id, name  │   └──────────────────┬───────────────────────┘
+└──────────────────┘                      │ Registered in Glue Catalog
+                                          ▼
+                       ┌──────────────────────────────────────────┐
+                       │       AWS GLUE CATALOG (Iceberg)         │
+                       │   DB:    nishant_test_nonprod_db         │
+                       │   Table: json_to_parquet_iceberg         │
+                       │   Type:  ICEBERG / EXTERNAL_TABLE        │
+                       │   Cols:  id (string, field_id=1)         │
+                       │          name (string, field_id=2)       │
+                       │   Metadata: 00001-c84ce93c-*.json (v1)   │
+                       └──────────────────┬───────────────────────┘
+                                          │ Via SNOWFLAKE_S3_INTEGRATION
+                                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              SNOWFLAKE EXTERNAL STAGE                            │
+│   NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.ICEBERG_S3_STAGE            │
+│   URL:  s3://nishant-test-nonprod-iceberg/  ·  us-east-1        │
+│   Auth: SNOWFLAKE_S3_INTEGRATION (IAM, no embedded creds)       │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │ Iceberg table registration
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│           SNOWFLAKE ICEBERG TABLE  ◄── PRIMARY ASSET            │
+│   NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG     │
+│   Type: Iceberg (BASE TABLE)  ·  Rows: 1,000  ·  23,416 bytes  │
+│   Created: 2026-03-10 14:23:57 PST                              │
+│   Columns: ID (TEXT), NAME (TEXT)                               │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │ READ hourly by Snowflake Task
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│         SNOWFLAKE TASK — DBT_ICEBERG_REFRESH_TASK               │
+│   NISHANT_ICEBERG_DB.DBT_SCHEMA                                  │
+│   Schedule: CRON 0 * * * * UTC  (every hour at :00)            │
+│   State: started (ACTIVE)  ·  Warehouse: COMPUTE_WH             │
+│   Calls: CALL run_dbt_iceberg_refresh()                         │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │ CREATE OR REPLACE (full refresh ~9.5s)
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│           DBT OUTPUT TABLE                                       │
+│   NISHANT_ICEBERG_DB.DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT     │
+│   Rows: 1,000  ·  Size: 17,408 bytes  ·  Cols: ID, NAME        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Asset Inventory
+## Layer 1 — AWS Glue Job (How the Iceberg Table is Created & Updated)
 
-| Asset | Type | Database | Schema | Owner | Created |
-|-------|------|----------|--------|-------|---------|
-| `JSON_TO_PARQUET_ICEBERG` | Iceberg Table (Source) | NISHANT_ICEBERG_DB | ICEBERG_SCHEMA | ACCOUNTADMIN | 2026-03-10 |
-| `ICEBERG_S3_STAGE` | External Stage | NISHANT_ICEBERG_DB | ICEBERG_SCHEMA | ACCOUNTADMIN | 2026-03-10 |
-| `DBT_ICEBERG_REFRESH_TASK` | Snowflake Task | NISHANT_ICEBERG_DB | DBT_SCHEMA | ACCOUNTADMIN | 2026-03-10 |
-| `JSON_TO_PARQUET_ICEBERG_DBT` | Iceberg Table (dbt Output) | NISHANT_ICEBERG_DB | DBT_SCHEMA | ACCOUNTADMIN | 2026-03-10 |
-| `SNOWFLAKE_S3_INTEGRATION` | Storage Integration | — | — | — | — |
-
----
-
-## Source Table: `JSON_TO_PARQUET_ICEBERG`
+### Job Details
 
 | Property | Value |
 |----------|-------|
-| **Fully Qualified Name** | `NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` |
-| **Table Type** | Iceberg (BASE TABLE) |
-| **Row Count** | 1,000 |
-| **Size** | 23,416 bytes (~23 KB) |
-| **Created** | 2026-03-10 14:23:57 PST |
-| **Last Altered** | 2026-03-10 14:24:01 PST |
-| **Owner** | ACCOUNTADMIN |
+| **Job Name** | `nishant-test-nonprod-json-to-parquet` |
+| **Script** | `s3://nishant-test-nonprod-glue-scripts/scripts/glue_json_to_parquet_v4.py` |
+| **Runtime** | Glue 4.0 · PySpark · Python 3 |
+| **Worker Type** | G.1X |
+| **Workers** | 2 |
+| **Max Concurrency** | 1 |
+| **Max Retries** | 1 |
+| **Timeout** | 60 minutes |
+| **IAM Role** | `arn:aws:iam::717728193460:role/nishant-test-non-prod-glue-role` |
+| **Triggered By** | `GitHubActionsRole` (CI/CD) |
+| **Bookmarking** | Enabled (`job-bookmark-enable`) |
+| **Iceberg Extension** | `org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions` |
 
-### Schema
+### Job Arguments
 
-| Column | Data Type | Nullable | Description |
-|--------|-----------|----------|-------------|
-| `ID` | TEXT | YES | Unique record identifier |
-| `NAME` | TEXT | YES | Record name |
+| Parameter | Value |
+|-----------|-------|
+| `--source_s3_path` | `s3://nishant-test-nonprod-source-raw/raw/` |
+| `--target_s3_path` | `s3://nishant-test-nonprod-target-parquet/json_to_parquet/` |
+| `--iceberg_s3_path` | `s3://nishant-test-nonprod-iceberg/json_to_parquet_iceberg/` |
+| `--iceberg_warehouse` | `s3://nishant-test-nonprod-iceberg/warehouse/` |
+| `--iceberg_table` | `json_to_parquet_iceberg` |
+| `--athena_database` | `nishant_test_nonprod_db` |
+| `--athena_table` | `json_to_parquet` |
+| `--athena_output_s3` | `s3://nishant-test-nonprod-athena-results/results/` |
+| `--datalake-formats` | `iceberg` |
+
+### How the Job Creates the Iceberg Table
+
+```python
+# 1 — Configure Spark for Iceberg + AWS Glue Catalog
+spark.conf.set("spark.sql.catalog.glue_catalog",
+               "org.apache.iceberg.spark.SparkCatalog")
+spark.conf.set("spark.sql.catalog.glue_catalog.warehouse",
+               "s3://nishant-test-nonprod-iceberg/warehouse/")
+spark.conf.set("spark.sql.catalog.glue_catalog.catalog-impl",
+               "org.apache.iceberg.aws.glue.GlueCatalog")
+spark.conf.set("spark.sql.catalog.glue_catalog.io-impl",
+               "org.apache.iceberg.aws.s3.S3FileIO")
+
+# 2 — Read JSON from S3
+dynamic_frame = glueContext.create_dynamic_frame.from_options(
+    connection_type="s3",
+    connection_options={"paths": ["s3://nishant-test-nonprod-source-raw/raw/"],
+                        "recurse": True},
+    format="json",
+    format_options={"multiLine": "true"},
+)
+
+# 3 — Select id and name only
+df_selected = df.select(col("id"), col("name"))
+
+# 4 — Write Parquet (Snappy) to Athena target
+glueContext.write_dynamic_frame.from_options(
+    frame=dynamic_frame_selected, connection_type="s3",
+    connection_options={"path": "s3://.../json_to_parquet/"},
+    format="parquet",
+    format_options={"compression": "snappy", "useGlueParquetWriter": "true"},
+)
+
+# 5 — Append to Iceberg table (creates if not exists, appends if exists)
+df_selected.writeTo(
+    "glue_catalog.nishant_test_nonprod_db.json_to_parquet_iceberg"
+).append()
+
+# 6 — Refresh Athena partition metadata
+athena_client.start_query_execution(
+    QueryString="MSCK REPAIR TABLE `nishant_test_nonprod_db`.`json_to_parquet`", ...
+)
+```
+
+### Glue Job Run History (Last 5 Runs)
+
+| Started (UTC) | Status | Duration | Notes |
+|---------------|--------|----------|-------|
+| 2026-03-09 19:42 | ✅ SUCCEEDED | 108s | v4 script — clean run |
+| 2026-03-09 19:33 | ✅ SUCCEEDED | 78s | v4 script — clean run |
+| 2026-03-09 19:31 | ❌ FAILED (retry) | 80s | `NameError: DynamicFrame not defined` (v3) |
+| 2026-03-09 19:29 | ❌ FAILED | 85s | `NameError: DynamicFrame not defined` (v3) |
+| 2026-03-09 16:14 | ❌ FAILED (retry) | 78s | `NameError: DynamicFrame not defined` (v3) |
+
+> **Root cause of failures:** `glue_json_to_parquet_v3.py` was missing `from awsglue.dynamicframe import DynamicFrame`. Fixed in `v4`.
 
 ---
 
-## Storage Layer
+## Layer 2 — AWS S3 Storage
+
+### S3 Buckets
+
+| Bucket | Purpose |
+|--------|---------|
+| `nishant-test-nonprod-source-raw` | Raw JSON input (`/raw/`) |
+| `nishant-test-nonprod-iceberg` | Iceberg table data + metadata |
+| `nishant-test-nonprod-target-parquet` | Parquet output for Athena |
+| `nishant-test-nonprod-glue-scripts` | Job scripts, temp files, Spark logs |
+| `nishant-test-nonprod-athena-results` | Athena query results |
+
+### Iceberg Table S3 Layout
+
+```
+s3://nishant-test-nonprod-iceberg/json_to_parquet_iceberg/
+├── data/                          (20 Parquet files, ~23KB total)
+│   ├── 00000-86-31d5a4a6-*.parquet
+│   ├── 00001-87-4ed8eb47-*.parquet
+│   └── ... (18 more files, written 2026-03-09 19:43)
+└── metadata/
+    ├── 00000-0a0421dc-*.metadata.json   (v0 — initial empty table, 767B)
+    ├── 00001-c84ce93c-*.metadata.json   (v1 — after data load, 2,137B)
+    ├── f1a16133-*-m0.avro               (manifest file, 7,608B)
+    └── snap-9076158952705182747-*.avro  (snapshot file, 4,276B)
+```
+
+**Snapshot ID:** `9076158952705182747`
+**Current metadata version:** v1
+
+---
+
+## Layer 3 — AWS Glue Data Catalog
 
 | Property | Value |
 |----------|-------|
-| **Stage Name** | `NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.ICEBERG_S3_STAGE` |
-| **Stage Type** | External |
-| **Cloud Provider** | AWS |
-| **S3 Bucket** | `s3://nishant-test-nonprod-iceberg/` |
-| **Region** | `us-east-1` |
+| **Catalog ID** | `717728193460` |
+| **Database** | `nishant_test_nonprod_db` |
+| **Created By** | `GitHubActionsRole` |
+
+| Table | Type | Format | Columns |
+|-------|------|--------|---------|
+| `json_to_parquet` | EXTERNAL_TABLE | Parquet/SNAPPY | id (string), name (string) |
+| `json_to_parquet_iceberg` | ICEBERG EXTERNAL_TABLE | Iceberg | id (string, field_id=1), name (string, field_id=2) |
+
+**Iceberg metadata pointer:** `s3://.../metadata/00001-c84ce93c-4e91-4261-88c4-5a9d926e5034.metadata.json`
+
+---
+
+## Layer 4 — Snowflake Integration
+
+| Property | Value |
+|----------|-------|
 | **Storage Integration** | `SNOWFLAKE_S3_INTEGRATION` |
-| **Credentials** | Via Storage Integration (no embedded keys) |
-| **Encryption** | Managed by integration |
+| **Stage** | `NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.ICEBERG_S3_STAGE` |
+| **S3 Bucket** | `s3://nishant-test-nonprod-iceberg/` · `us-east-1` |
+| **Auth** | IAM role-based (no embedded credentials) |
+| **Snowflake Table** | `NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` |
+| **Rows** | 1,000 · Size: 23,416 bytes |
+| **Columns** | `ID TEXT`, `NAME TEXT` |
 
 ---
 
-## Transformation Layer: dbt Task
+## Layer 5 — Snowflake dbt Refresh (Downstream)
 
 | Property | Value |
 |----------|-------|
-| **Task Name** | `DBT_ICEBERG_REFRESH_TASK` |
-| **Schema** | `NISHANT_ICEBERG_DB.DBT_SCHEMA` |
-| **Schedule** | `CRON 0 * * * * UTC` — every hour at :00 |
+| **Task** | `NISHANT_ICEBERG_DB.DBT_SCHEMA.DBT_ICEBERG_REFRESH_TASK` |
+| **Schedule** | `CRON 0 * * * * UTC` — every hour |
 | **State** | `started` (Active) |
-| **Warehouse** | `COMPUTE_WH` |
-| **Procedure Called** | `run_dbt_iceberg_refresh()` |
-| **Output Table** | `NISHANT_ICEBERG_DB.DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` |
-| **Transformation Mode** | `CREATE OR REPLACE` (full refresh each run) |
-
-### Task Execution History (Last 10 Runs)
-
-| Scheduled Time (UTC) | Start Time | Completed | Status | Duration |
-|----------------------|------------|-----------|--------|----------|
-| 2026-03-11 15:00 | 15:00:01 | 15:00:14 | ✅ SUCCEEDED | ~13s |
-| 2026-03-11 14:00 | 14:00:01 | 14:00:14 | ✅ SUCCEEDED | ~13s |
-| 2026-03-11 13:00 | 13:00:01 | 13:00:16 | ✅ SUCCEEDED | ~15s |
-| 2026-03-11 12:00 | 12:00:00 | 12:00:05 | ✅ SUCCEEDED | ~5s |
-| 2026-03-11 11:00 | 11:00:00 | 11:00:06 | ✅ SUCCEEDED | ~6s |
-| 2026-03-11 10:00 | 10:00:01 | 10:00:09 | ✅ SUCCEEDED | ~8s |
-| 2026-03-11 09:00 | 09:00:01 | 09:00:12 | ✅ SUCCEEDED | ~11s |
-| 2026-03-11 08:00 | 08:00:01 | 08:00:07 | ✅ SUCCEEDED | ~6s |
-| 2026-03-11 07:00 | 07:00:01 | 07:00:10 | ✅ SUCCEEDED | ~9s |
-| 2026-03-11 06:00 | 06:00:01 | 06:00:10 | ✅ SUCCEEDED | ~9s |
-
-> All 10 recorded runs succeeded. Average duration: ~9.5 seconds.
+| **Output** | `NISHANT_ICEBERG_DB.DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` |
+| **Mode** | `CREATE OR REPLACE` (full refresh) |
+| **Avg Duration** | ~9.5 seconds · Success rate: 10/10 (100%) |
 
 ---
 
-## Object Dependencies
+## Full Asset Inventory
 
-| Referencing Object | Type | Depends On | Type | Dependency |
-|-------------------|------|-----------|------|-----------|
-| `ICEBERG_SCHEMA.ICEBERG_S3_STAGE` | Stage | `SNOWFLAKE_S3_INTEGRATION` | Integration | BY_ID |
-| `DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` | Table | `ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` | Table | READ (via Task) |
-| `MICRO_FUTURES.LATEST_SIGNALS` | View | `MICRO_FUTURES.FUTURES_FORECAST` | Table | BY_NAME |
-
----
-
-## Access History (Last 30 Days — Key Events)
-
-| Timestamp (PST) | User | Operation | Objects Read | Objects Written |
-|-----------------|------|-----------|-------------|----------------|
-| 2026-03-11 15:00 | SYSTEM | dbt Refresh | `ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` | `DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` |
-| 2026-03-11 14:00 | SYSTEM | dbt Refresh | `ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` | `DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` |
-| 2026-03-11 13:00 | SYSTEM | dbt Refresh | `ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` | `DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` |
-| 2026-03-11 13:27 | NISHANTKARRI | INSERT (×10) | — | `MICRO_FUTURES.MCL_USD_BARREL_FORECAST` |
-| 2026-03-11 12:17 | NISHANTKARRI | SELECT | `MICRO_FUTURES.LATEST_SIGNALS` | — |
-| 2026-03-11 12:17 | NISHANTKARRI | INSERT | — | `MICRO_FUTURES.FUTURES_FORECAST` |
+| # | Asset | Layer | Platform | Type |
+|---|-------|-------|----------|------|
+| 1 | `s3://nishant-test-nonprod-source-raw/raw/` | Source | AWS S3 | Raw JSON |
+| 2 | `nishant-test-nonprod-json-to-parquet` (Glue Job) | Ingestion | AWS Glue | ETL Job |
+| 3 | `glue_json_to_parquet_v4.py` | Ingestion | GitHub / S3 | Script |
+| 4 | `s3://nishant-test-nonprod-iceberg/json_to_parquet_iceberg/` | Storage | AWS S3 | Iceberg files |
+| 5 | `nishant_test_nonprod_db.json_to_parquet_iceberg` | Catalog | AWS Glue | Iceberg Table |
+| 6 | `nishant_test_nonprod_db.json_to_parquet` | Catalog | AWS Glue / Athena | Parquet Table |
+| 7 | `SNOWFLAKE_S3_INTEGRATION` | Integration | Snowflake / AWS | Storage Integration |
+| 8 | `ICEBERG_SCHEMA.ICEBERG_S3_STAGE` | Integration | Snowflake | External Stage |
+| 9 | `ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG` | Consumption | Snowflake | Iceberg Table |
+| 10 | `DBT_SCHEMA.DBT_ICEBERG_REFRESH_TASK` | Transform | Snowflake | Scheduled Task |
+| 11 | `DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT` | Transform | Snowflake | dbt Output Table |
 
 ---
 
-## Downstream Impact
-
-If `JSON_TO_PARQUET_ICEBERG` is unavailable or schema changes:
-
-```
-JSON_TO_PARQUET_ICEBERG  (source — ICEBERG_SCHEMA)
-        │
-        └──► JSON_TO_PARQUET_ICEBERG_DBT  (dbt output — DBT_SCHEMA)
-                    │
-                    └──► [Any downstream consumers of DBT_SCHEMA]
-```
-
-> **Note:** `MICRO_FUTURES.FUTURES_FORECAST` and `MCL_USD_BARREL_FORECAST` are
-> independent tables — not downstream of this Iceberg table.
-
----
-
-## Data Quality Notes
+## Data Quality & Reliability
 
 | Check | Result |
 |-------|--------|
-| Row count consistency | Source: 1,000 rows → dbt output: 1,000 rows ✅ |
-| Task reliability | 10/10 successful runs (100% success rate) ✅ |
-| Schema drift | None detected — columns stable (ID, NAME) ✅ |
-| Storage integration | Active and credential-free (uses IAM) ✅ |
-| Avg task duration | ~9.5 seconds (healthy) ✅ |
+| Row consistency (S3 → Snowflake) | 1,000 rows ✅ |
+| Glue job recent success rate | 2/5 (3 failed on v3 script — fixed in v4) ✅ |
+| Snowflake task success rate | 10/10 (100%) ✅ |
+| Schema drift | None — columns stable (id, name) ✅ |
+| Iceberg metadata versions | v0 (empty) → v1 (with data) ✅ |
+| Storage auth | IAM role-based (no embedded keys) ✅ |
 
 ---
 
-## How to Manage
+## Management Commands
+
+```bash
+# Trigger Glue job manually
+aws glue start-job-run \
+  --job-name nishant-test-nonprod-json-to-parquet --region us-east-1
+
+# Check last 5 job runs
+aws glue get-job-runs \
+  --job-name nishant-test-nonprod-json-to-parquet \
+  --region us-east-1 --max-results 5
+
+# List Iceberg files in S3
+aws s3 ls s3://nishant-test-nonprod-iceberg/json_to_parquet_iceberg/ --recursive
+```
 
 ```sql
--- Suspend the hourly refresh task
-ALTER TASK NISHANT_ICEBERG_DB.DBT_SCHEMA.DBT_ICEBERG_REFRESH_TASK SUSPEND;
+-- Query Snowflake Iceberg table
+SELECT * FROM NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG LIMIT 100;
 
--- Resume the task
+-- Suspend / resume hourly dbt refresh
+ALTER TASK NISHANT_ICEBERG_DB.DBT_SCHEMA.DBT_ICEBERG_REFRESH_TASK SUSPEND;
 ALTER TASK NISHANT_ICEBERG_DB.DBT_SCHEMA.DBT_ICEBERG_REFRESH_TASK RESUME;
 
--- Check task status
-SHOW TASKS IN DATABASE NISHANT_ICEBERG_DB;
-
--- View recent task runs
+-- View task run history
 SELECT * FROM snowflake.account_usage.task_history
 WHERE database_name = 'NISHANT_ICEBERG_DB'
 ORDER BY scheduled_time DESC LIMIT 10;
-
--- Query source table
-SELECT * FROM NISHANT_ICEBERG_DB.ICEBERG_SCHEMA.JSON_TO_PARQUET_ICEBERG LIMIT 100;
-
--- Query dbt output
-SELECT * FROM NISHANT_ICEBERG_DB.DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT LIMIT 100;
 ```
 
 ---
 
-*Document auto-generated by Claude Code from live Snowflake metadata — `ACCOUNT_USAGE` views + `INFORMATION_SCHEMA`.*
+*Auto-generated from live AWS Glue API, S3 API, and Snowflake account usage metadata.*
+*AWS: `717728193460` · Snowflake: `PHTIMLK-UZ24815` · Branch: `non-prod`*
