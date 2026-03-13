@@ -140,7 +140,7 @@ def get_table_configs(job_cfg: dict) -> dict:
 # ── Alert dispatcher ──────────────────────────────────────────────────────────
 
 def fire_alert(job_cfg, job_result, quality_results, schema_results, drift_results, logger,
-               monitor: "JobMonitor" = None):
+               monitor: "JobMonitor" = None, recipients: list = None):
     report = build_report(job_cfg, job_result, quality_results, schema_results, drift_results)
     if not should_alert(report):
         logger.info("✅ All checks passed — no alert needed")
@@ -159,11 +159,13 @@ def fire_alert(job_cfg, job_result, quality_results, schema_results, drift_resul
         f"{len(report['issues_detected'])} issue(s) | "
         f"Confidence: {report['confidence']}"
     )
+
+    to_email = recipients or os.getenv("ALERT_EMAIL", "itsnishant56@gmail.com")
     sent = send_alert_email(
         report,
         gmail_user=os.getenv("GMAIL_USER"),
         gmail_app_pass=os.getenv("GMAIL_APP_PASS"),
-        to_email=os.getenv("ALERT_EMAIL", "itsnishant56@gmail.com"),
+        to_email=to_email,
     )
     if sent:
         logger.info(f"📧 Sent: {subject}")
@@ -175,7 +177,7 @@ def fire_alert(job_cfg, job_result, quality_results, schema_results, drift_resul
 
 # ── Per-job check runners ─────────────────────────────────────────────────────
 
-def run_full_analysis(glue_client, logs_client, job_cfg, logger, monitor=None):
+def run_full_analysis(glue_client, logs_client, job_cfg, logger, monitor=None, recipients=None):
     job_result = run_job_health_check(glue_client, logs_client, job_cfg)
     logger.info(
         f"Status: {job_result.get('status')} | "
@@ -194,10 +196,11 @@ def run_full_analysis(glue_client, logs_client, job_cfg, logger, monitor=None):
             sf.close()
         except Exception as e:
             logger.warning(f"Snowflake checks skipped: {e}")
-    fire_alert(job_cfg, job_result, quality_results, schema_results, drift_results, logger, monitor=monitor)
+    fire_alert(job_cfg, job_result, quality_results, schema_results, drift_results, logger,
+               monitor=monitor, recipients=recipients)
 
 
-def run_freshness_check_job(job_cfg, logger, monitor=None):
+def run_freshness_check_job(job_cfg, logger, monitor=None, recipients=None):
     freshness_cfg = job_cfg.get("freshness", {})
     if not freshness_cfg or not freshness_cfg.get("key_column"):
         return  # freshness not configured for this job
@@ -225,10 +228,11 @@ def run_freshness_check_job(job_cfg, logger, monitor=None):
     if all_freshness_issues:
         dummy = {"status": "FRESHNESS_BREACH", "failure_type": None,
                  "error_message": "", "remediation": [], "runtime_sla": {}}
-        fire_alert(job_cfg, dummy, quality_results, [], [], logger, monitor=monitor)
+        fire_alert(job_cfg, dummy, quality_results, [], [], logger,
+                   monitor=monitor, recipients=recipients)
 
 
-def run_drift_check_job(job_cfg, logger, monitor=None):
+def run_drift_check_job(job_cfg, logger, monitor=None, recipients=None):
     table_cfgs = get_table_configs(job_cfg)
     if not table_cfgs:
         return
@@ -249,7 +253,8 @@ def run_drift_check_job(job_cfg, logger, monitor=None):
     if has_issues:
         dummy = {"status": "DRIFT_DETECTED", "failure_type": None,
                  "error_message": "", "remediation": [], "runtime_sla": {}}
-        fire_alert(job_cfg, dummy, [], schema_results, drift_results, logger, monitor=monitor)
+        fire_alert(job_cfg, dummy, [], schema_results, drift_results, logger,
+                   monitor=monitor, recipients=recipients)
     else:
         logger.info("Drift check: ✅ No drift detected")
 
@@ -270,6 +275,9 @@ class JobMonitor(threading.Thread):
         self.logs_client     = logs_client
         self.settings        = settings
         self.logger          = logging.getLogger(f"DRE.{glue_job_name}")
+        # Alert recipients from config (supports list or single string)
+        emails = settings.get("alert_emails") or settings.get("alert_email")
+        self.recipients = [emails] if isinstance(emails, str) else (emails or ["itsnishant56@gmail.com"])
         # Restore last known run_id from disk so we don't re-alert on restart
         self._last_run_id    = state_get(glue_job_name, "last_run_id")
         self._last_fresh_ts  = 0.0
@@ -305,6 +313,7 @@ class JobMonitor(threading.Thread):
                     run_full_analysis(
                         self.glue_client, self.logs_client,
                         self.job_cfg, self.logger, monitor=self,
+                        recipients=self.recipients,
                     )
             except Exception as e:
                 self.logger.error(f"Completion check error: {e}")
@@ -312,7 +321,7 @@ class JobMonitor(threading.Thread):
             # Freshness check
             if now - self._last_fresh_ts >= fresh_int:
                 try:
-                    run_freshness_check_job(self.job_cfg, self.logger, monitor=self)
+                    run_freshness_check_job(self.job_cfg, self.logger, monitor=self, recipients=self.recipients)
                 except Exception as e:
                     self.logger.error(f"Freshness error: {e}")
                 self._last_fresh_ts = now
@@ -320,7 +329,7 @@ class JobMonitor(threading.Thread):
             # Drift check
             if now - self._last_drift_ts >= drift_int:
                 try:
-                    run_drift_check_job(self.job_cfg, self.logger, monitor=self)
+                    run_drift_check_job(self.job_cfg, self.logger, monitor=self, recipients=self.recipients)
                 except Exception as e:
                     self.logger.error(f"Drift error: {e}")
                 self._last_drift_ts = now

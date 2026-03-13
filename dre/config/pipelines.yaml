@@ -6,7 +6,9 @@ settings:
   poll_interval_seconds: 60
   freshness_check_interval_seconds: 300
   drift_check_interval_seconds: 3600
-  alert_email: itsnishant56@gmail.com
+  alert_emails:
+    - itsnishant56@gmail.com
+    - suman0221@gmail.com
 
 defaults:
   sla_runtime_minutes: 60
