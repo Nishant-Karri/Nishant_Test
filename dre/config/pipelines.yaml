@@ -1,0 +1,72 @@
+# ============================================================
+# Data Reliability Engineer — Pipeline Monitoring Config
+# ============================================================
+
+settings:
+  poll_interval_seconds: 60          # How often to poll Glue job status
+  freshness_check_interval_seconds: 300  # Every 5 min check freshness
+  drift_check_interval_seconds: 3600     # Every 1 hour check drift
+  alert_email: itsnishant56@gmail.com
+  snowflake_schema: RETAIL
+  snowflake_database: ANALYTICS
+
+pipelines:
+  - name: DBT_ICEBERG_REFRESH_TASK
+    glue_job_name: dbt_iceberg_refresh
+    type: glue
+    target_tables:
+      - RETAIL.FACT_SALES
+      - RETAIL.DIM_DATE
+      - RETAIL.DIM_STORE
+    freshness:
+      key_column: DATE
+      max_delay_minutes: 60          # Alert if data older than 60 min
+    row_count:
+      deviation_threshold_pct: 20    # Alert if > 20% deviation
+    sla_runtime_minutes: 30          # Alert if job runs > 30 min
+
+  - name: FACT_SALES_DAILY_LOAD
+    glue_job_name: fact_sales_daily_load
+    type: glue
+    target_tables:
+      - RETAIL.FACT_SALES
+    freshness:
+      key_column: DATE
+      max_delay_minutes: 120
+    row_count:
+      deviation_threshold_pct: 20
+    sla_runtime_minutes: 45
+
+tables:
+  RETAIL.FACT_SALES:
+    primary_key: ORDER_ID
+    not_null_columns:
+      - ORDER_ID
+      - DATE
+      - STORE_NUMBER
+      - GROSS_SALES
+    numeric_columns:
+      - GROSS_SALES
+      - NET_SALES
+      - TAX
+    categorical_columns:
+      PAYMENT_STATUS: [Completed, Refunded, Pending]
+      PAYMENT_TYPE: [Credit Card, Debit Card, Cash, Apple Pay, Google Pay, Gift Card]
+      ORDER_SOURCE: [In-Store, Mobile App, Website, Kiosk, Phone]
+      ORDER_DESTINATION: [Dine-In, Takeout, Delivery, Curbside Pickup, Drive-Thru]
+
+  RETAIL.DIM_DATE:
+    primary_key: DATE
+    not_null_columns:
+      - DATE
+      - WEEK
+      - MONTH
+      - QUARTER
+      - YEAR
+
+  RETAIL.DIM_STORE:
+    primary_key: STORE_NUMBER
+    not_null_columns:
+      - STORE_NUMBER
+      - CITY
+      - ADDRESS
