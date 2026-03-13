@@ -1,0 +1,17 @@
+# Environment / secrets
+.env
+
+# Runtime state (local only)
+config/monitor_state.json
+config/schema_snapshots/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Logs
+*.log
