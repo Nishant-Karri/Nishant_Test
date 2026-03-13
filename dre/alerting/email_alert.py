@@ -267,6 +267,99 @@ def send_alert_email(report: dict, gmail_user: str, gmail_app_pass: str, to_emai
         return False
 
 
+def _resolve_affected_tables(
+    job_result: dict,
+    quality_results: list,
+    schema_results: list,
+    drift_results: list,
+    all_target_tables: list,
+) -> list:
+    """
+    Return only the tables actually impacted by the detected failure.
+
+    Rules:
+    - Job FAILED          → all target tables (entire pipeline output is suspect)
+    - Freshness breach    → tables where freshness check failed
+    - Schema drift        → tables where drift was detected
+    - Data drift          → tables where drift was detected
+    - Data quality issues → tables where specific checks failed
+    - No issues           → empty list
+    """
+    affected = []
+
+    status = job_result.get("status", "")
+    failure_type = job_result.get("failure_type", "unknown")
+
+    # Job failed → all pipeline output tables are affected
+    if status == "FAILED":
+        for t in all_target_tables:
+            entry = f"{t}  [write blocked — job did not complete]"
+            if entry not in affected:
+                affected.append(entry)
+        return affected
+
+    # Freshness breaches — extract table from issue message
+    for qr in quality_results:
+        for issue in qr.get("all_issues", []):
+            table = qr.get("table", "")
+            check = issue.get("check", "")
+            if not table:
+                continue
+            if check == "freshness" and not issue.get("passed", True):
+                label = f"{table}  [freshness breach — data stale]"
+                if label not in affected:
+                    affected.append(label)
+            elif check == "null_validation":
+                col = issue.get("column", "key column")
+                label = f"{table}  [null violation — {col}]"
+                if label not in affected:
+                    affected.append(label)
+            elif check == "duplicate_detection":
+                label = f"{table}  [duplicate primary keys]"
+                if label not in affected:
+                    affected.append(label)
+            elif check == "row_count_vs_yesterday" or check == "row_count_vs_7d_avg":
+                label = f"{table}  [row count anomaly]"
+                if label not in affected:
+                    affected.append(label)
+            elif check == "categorical_validation":
+                label = f"{table}  [unexpected categorical values]"
+                if label not in affected:
+                    affected.append(label)
+
+    # Schema drift — only tables where drift was detected
+    for sr in schema_results:
+        if sr.get("drift_detected"):
+            table = sr.get("table", "")
+            added   = sr.get("added_columns", [])
+            dropped = sr.get("dropped_columns", [])
+            changed = sr.get("changed_columns", [])
+            parts = []
+            if added:
+                parts.append(f"{len(added)} column(s) added")
+            if dropped:
+                parts.append(f"{len(dropped)} column(s) dropped")
+            if changed:
+                parts.append(f"{len(changed)} type change(s)")
+            label = f"{table}  [schema drift — {', '.join(parts)}]" if parts else f"{table}  [schema drift]"
+            if label not in affected:
+                affected.append(label)
+
+    # Data drift — only tables where drift was detected
+    for dr in drift_results:
+        if not dr.get("passed", True):
+            table = dr.get("table", "")
+            cols = list({i.get("column", "") for i in dr.get("issues", []) if i.get("column")})
+            label = (
+                f"{table}  [data drift — {', '.join(cols[:3])}{'...' if len(cols) > 3 else ''}]"
+                if cols else f"{table}  [data drift detected]"
+            )
+            if label not in affected:
+                affected.append(label)
+
+    return affected if affected else [f"{t}  [no issues]" for t in all_target_tables]
+
+
 def build_report(
     pipeline_cfg: dict,
     job_result: dict,
@@ -316,7 +409,12 @@ def build_report(
     job_name = pipeline_cfg["name"]
     exec_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     status = job_result.get("status", "UNKNOWN")
-    affected = pipeline_cfg.get("target_tables", [])
+
+    # Build affected tables dynamically from actual issues
+    affected = _resolve_affected_tables(
+        job_result, quality_results, schema_results, drift_results,
+        pipeline_cfg.get("target_tables", [])
+    )
 
     summary = (
         f"Pipeline '{job_name}' completed with status {status}. "
