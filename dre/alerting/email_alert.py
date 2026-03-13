@@ -330,11 +330,33 @@ def build_report(
         if failure_type and failure_type != "unknown"
         else None
     )
-    email_subject = (
-        f"[DATA PIPELINE ALERT] {job_name} — {severity} | {failure_label}"
-        if failure_label
-        else f"[DATA PIPELINE ALERT] {job_name} — {severity}"
-    )
+
+    # Determine alert category from issue types
+    check_types = {i.get("check", "") for i in all_issues}
+    job_failed   = status == "FAILED"
+    has_freshness = "freshness" in check_types
+    has_schema    = "schema_drift" in check_types
+    has_drift     = "data_drift" in check_types
+    has_quality   = bool(check_types - {"job_failure", "runtime_sla"})
+
+    if job_failed and failure_label:
+        alert_category = f"JOB FAILURE | {failure_label}"
+    elif job_failed:
+        alert_category = "JOB FAILURE"
+    elif has_schema and has_drift:
+        alert_category = "SCHEMA & DATA DRIFT"
+    elif has_schema:
+        alert_category = "SCHEMA DRIFT"
+    elif has_drift:
+        alert_category = "DATA DRIFT"
+    elif has_freshness:
+        alert_category = "FRESHNESS BREACH"
+    elif has_quality:
+        alert_category = "DATA QUALITY"
+    else:
+        alert_category = "PIPELINE ALERT"
+
+    email_subject = f"[{alert_category}] {job_name} — {severity}"
 
     email_body = f"""Pipeline: {job_name}
 Execution Time: {exec_time}
