@@ -324,7 +324,17 @@ def build_report(
         f"Severity: {severity}."
     )
 
-    email_subject = f"[DATA PIPELINE ALERT] {job_name} — {severity}"
+    failure_type = job_result.get("failure_type")
+    failure_label = (
+        failure_type.replace("_", " ").upper()
+        if failure_type and failure_type != "unknown"
+        else None
+    )
+    email_subject = (
+        f"[DATA PIPELINE ALERT] {job_name} — {severity} | {failure_label}"
+        if failure_label
+        else f"[DATA PIPELINE ALERT] {job_name} — {severity}"
+    )
 
     email_body = f"""Pipeline: {job_name}
 Execution Time: {exec_time}
