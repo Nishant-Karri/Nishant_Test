@@ -1,0 +1,33 @@
+# ============================================================
+# DRE — Per-Job Pipeline Configuration
+# ============================================================
+
+settings:
+  poll_interval_seconds: 60
+  freshness_check_interval_seconds: 300
+  drift_check_interval_seconds: 3600
+  alert_email: itsnishant56@gmail.com
+
+defaults:
+  sla_runtime_minutes: 60
+  row_count_deviation_pct: 20
+  freshness_key_column: LOAD_TIMESTAMP
+  freshness_max_delay_minutes: 120
+
+jobs:
+  - name: nishant-test-nonprod-json-to-parquet
+    glue_job_name: nishant-test-nonprod-json-to-parquet
+    sla_runtime_minutes: 30
+    # freshness check disabled — table does not have a timestamp column yet
+    # re-enable once LOAD_TIMESTAMP or similar column is added to the target table
+    # freshness:
+    #   key_column: LOAD_TIMESTAMP
+    #   max_delay_minutes: 60
+    row_count:
+      deviation_threshold_pct: 20
+    target_tables:
+      - name: NISHANT_ICEBERG_DB.DBT_SCHEMA.JSON_TO_PARQUET_ICEBERG_DBT
+        primary_key: ID
+        not_null_columns: [ID]
+        numeric_columns: []
+        categorical_columns: {}
