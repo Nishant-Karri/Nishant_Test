@@ -25,6 +25,7 @@ FAILURE_PATTERNS = {
     "upstream_dependency": [
         r"table.*does not exist", r"S3.*NoSuchKey", r"FileNotFound",
         r"upstream.*failed", r"dependency.*unavailable",
+        r"NoSuchBucket", r"bucket does not exist", r"AmazonS3Exception", r"Status Code: 404",
     ],
     "timeout": [
         r"timeout", r"exceeded.*time limit", r"job.*timed out",
@@ -118,7 +119,7 @@ def get_cloudwatch_logs(logs_client, job_name: str, run_id: str, tail_lines: int
         return ""
 
 
-def classify_failure(error_message: str, logs: str) -> tuple[str, list[str]]:
+def classify_failure(error_message: str, logs: str) -> tuple:
     """
     Classify failure type from error message and logs.
     Returns (failure_type, remediation_steps).

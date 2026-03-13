@@ -44,7 +44,7 @@ def get_current_schema(sf_conn, table: str) -> dict:
         cur.close()
 
 
-def load_snapshot(table: str) -> dict | None:
+def load_snapshot(table: str) -> dict:
     """Load saved schema snapshot from disk."""
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
     path = _snapshot_path(table)
