@@ -176,7 +176,7 @@ def _snapshot_path(table: str) -> str:
     return os.path.join(SNAPSHOT_DIR, f"{safe}.json")
 
 
-def _parse_table(table: str) -> tuple[str, str, str]:
+def _parse_table(table: str) -> tuple:
     """Parse 'DB.SCHEMA.TABLE' → (db, schema, table)."""
     parts = table.split(".")
     if len(parts) == 3:

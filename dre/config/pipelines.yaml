@@ -1,37 +1,39 @@
 # ============================================================
-# Data Reliability Engineer — Pipeline Monitoring Config
+# DRE — Per-Job Pipeline Configuration
+# New Glue jobs are auto-discovered. Add a matching entry here
+# for custom SLA, freshness, and table config. Jobs without an
+# entry fall back to the defaults section.
 # ============================================================
 
 settings:
-  poll_interval_seconds: 60          # How often to poll Glue job status
-  freshness_check_interval_seconds: 300  # Every 5 min check freshness
-  drift_check_interval_seconds: 3600     # Every 1 hour check drift
+  poll_interval_seconds: 60
+  freshness_check_interval_seconds: 300
+  drift_check_interval_seconds: 3600
   alert_email: itsnishant56@gmail.com
-  snowflake_schema: RETAIL
-  snowflake_database: ANALYTICS
 
-pipelines:
+defaults:
+  sla_runtime_minutes: 60
+  row_count_deviation_pct: 20
+  freshness_key_column: DATE
+  freshness_max_delay_minutes: 120
+
+jobs:
   - name: nishant-test-nonprod-json-to-parquet
     glue_job_name: nishant-test-nonprod-json-to-parquet
-    type: glue
-    target_tables:
-      - nishant_test_nonprod_db.json_to_parquet_iceberg
-      - nishant_test_nonprod_db.json_to_parquet
+    sla_runtime_minutes: 30
     freshness:
       key_column: DATE
       max_delay_minutes: 60
     row_count:
       deviation_threshold_pct: 20
-    sla_runtime_minutes: 30
-
-tables:
-  nishant_test_nonprod_db.json_to_parquet_iceberg:
-    primary_key: id
-    not_null_columns:
-      - id
-      - DATE
-  nishant_test_nonprod_db.json_to_parquet:
-    primary_key: id
-    not_null_columns:
-      - id
-      - DATE
+    target_tables:
+      - name: nishant_test_nonprod_db.json_to_parquet_iceberg
+        primary_key: id
+        not_null_columns: [id, DATE]
+        numeric_columns: []
+        categorical_columns: {}
+      - name: nishant_test_nonprod_db.json_to_parquet
+        primary_key: id
+        not_null_columns: [id, DATE]
+        numeric_columns: []
+        categorical_columns: {}
