@@ -13,19 +13,37 @@ FAILURE_PATTERNS = {
     "schema_mismatch": [
         r"schema mismatch", r"column.*not found", r"AnalysisException",
         r"cannot resolve column", r"incompatible types",
+        r"Number of columns in file.*does not match",
+        r"field.*type.*mismatch", r"value too long for column",
     ],
     "data_error": [
         r"data type mismatch", r"null value.*not-null constraint",
         r"constraint violation", r"invalid value", r"parse error",
+        r"conversion error", r"Numeric value.*is not recognized",
     ],
     "infrastructure": [
         r"OutOfMemoryError", r"Connection refused", r"SIGKILL",
         r"executor lost", r"container exited", r"oom-kill",
+        r"Net\.ConnectException", r"SocketTimeoutException",
     ],
     "upstream_dependency": [
         r"table.*does not exist", r"S3.*NoSuchKey", r"FileNotFound",
         r"upstream.*failed", r"dependency.*unavailable",
         r"NoSuchBucket", r"bucket does not exist", r"AmazonS3Exception", r"Status Code: 404",
+    ],
+    "snowflake_s3_integration": [
+        r"Insufficient privileges to operate on stage",
+        r"Failed to open file.*s3://",
+        r"SNOWFLAKE_S3_INTEGRATION",
+        r"AWS credentials.*not found",
+        r"S3 access denied", r"AccessDenied",
+        r"Error.*accessing.*S3.*bucket",
+        r"COPY INTO.*failed",
+        r"Stage.*does not exist",
+        r"Integration.*not found",
+        r"SQL access control error.*stage",
+        r"net\.snowflake.*S3",
+        r"Failed to copy.*from S3",
     ],
     "timeout": [
         r"timeout", r"exceeded.*time limit", r"job.*timed out",
@@ -53,6 +71,14 @@ REMEDIATION = {
         "Verify upstream job completed successfully.",
         "Check S3 source paths and file existence.",
         "Review pipeline DAG dependencies.",
+    ],
+    "snowflake_s3_integration": [
+        "Verify SNOWFLAKE_S3_INTEGRATION IAM role has s3:GetObject and s3:ListBucket on the target bucket.",
+        "Check the Snowflake external stage S3 URL matches the actual bucket and prefix.",
+        "Re-run: ALTER STORAGE INTEGRATION SNOWFLAKE_S3_INTEGRATION REFRESH in Snowflake.",
+        "Confirm the IAM trust policy includes Snowflake's AWS account ID and external ID.",
+        "Check S3 bucket policy does not block the Snowflake IAM role.",
+        "Run DESC INTEGRATION SNOWFLAKE_S3_INTEGRATION and verify STORAGE_AWS_IAM_USER_ARN is trusted.",
     ],
     "timeout": [
         "Increase job timeout limit in Glue settings.",
