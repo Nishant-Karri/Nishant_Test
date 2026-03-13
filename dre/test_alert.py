@@ -22,7 +22,7 @@ from alerting.email_alert import build_report, send_alert_email, should_alert
 # ── Hardcoded test inputs ─────────────────────────────────────────────────────
 
 JOB_NAME      = "nishant-test-nonprod-json-to-parquet"
-RUN_ID        = "jr_e97e6d3e2f36da9a3e5b4b0ccbccee3c6c6437db08e7d5d588933e65d1c5b5b7"
+RUN_ID        = "jr_8c07f203ce8664c609ea2402835902ddc9beaf1acb86154e285a7d9057ae91af"
 ERROR_MESSAGE = (
     "An error occurred while calling o106.getDynamicFrame. "
     "com.amazon.ws.emr.hadoop.fs.shaded.com.amazonaws.services.s3.model.AmazonS3Exception: "
@@ -34,7 +34,7 @@ DURATION_MIN  = 1.0
 PIPELINE_CFG = {
     "name":              "nishant-test-nonprod-json-to-parquet",
     "glue_job_name":     JOB_NAME,
-    "target_tables":     ["RETAIL.FACT_SALES", "RETAIL.DIM_DATE", "RETAIL.DIM_STORE"],
+    "target_tables":     ["nishant_test_nonprod_db.json_to_parquet_iceberg", "nishant_test_nonprod_db.json_to_parquet"],
     "freshness": {
         "key_column":        "DATE",
         "max_delay_minutes": 60,
@@ -55,8 +55,8 @@ job_result = {
     "glue_job":        JOB_NAME,
     "run_id":          RUN_ID,
     "status":          "FAILED",
-    "started_at":      "2026-03-13 00:07:22 UTC",
-    "completed_at":    "2026-03-13 00:08:26 UTC",
+    "started_at":      "2026-03-13 00:18:47 UTC",
+    "completed_at":    "2026-03-13 00:19:35 UTC",
     "duration_minutes": DURATION_MIN,
     "runtime_sla":     runtime_sla,
     "failure_type":    failure_type,
