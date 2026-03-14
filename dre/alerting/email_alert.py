@@ -245,22 +245,28 @@ def build_email_html(report: dict) -> str:
 </html>"""
 
 
-def send_alert_email(report: dict, gmail_user: str, gmail_app_pass: str, to_email: str):
-    """Send HTML alert email via Gmail SMTP."""
+def send_alert_email(report: dict, gmail_user: str, gmail_app_pass: str, to_email):
+    """Send HTML alert email via Gmail SMTP.
+
+    to_email can be a single address string or a list of addresses.
+    """
+    recipients = [to_email] if isinstance(to_email, str) else list(to_email)
+    recipients_str = ", ".join(recipients)
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = report["email_subject"]
     msg["From"] = gmail_user
-    msg["To"] = to_email
+    msg["To"] = recipients_str
 
     msg.attach(MIMEText(report["email_body"], "plain"))
     msg.attach(MIMEText(build_email_html(report), "html"))
 
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as server:
             server.starttls()
             server.login(gmail_user, gmail_app_pass)
-            server.sendmail(gmail_user, to_email, msg.as_string())
-        logger.info(f"Alert email sent to {to_email}: {report['email_subject']}")
+            server.sendmail(gmail_user, recipients, msg.as_string())
+        logger.info(f"Alert email sent to {recipients_str}: {report['email_subject']}")
         return True
     except Exception as e:
         logger.error(f"Failed to send alert email: {e}")
